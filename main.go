@@ -1,32 +1,4 @@
-// decryptor decrypts files produced by collector (FCOL0001 / RSA-OAEP + AES-256-GCM).
-//
-// Usage:
-//
-//	# Single artifact bundle → extract files into a directory
-//	decryptor.exe -key 2026q2.pri -in HOSTNAME.2026q2 -out C:\Decrypted\
-//
-//	# Batch: decrypt every matching file in a directory
-//	decryptor.exe -key 2026q2.pri -dir C:\Evidence -out C:\Decrypted
-//
-// Key format:
-//
-//	The -key flag accepts an RSA private key in either:
-//	  • PKCS#1 PEM  (-----BEGIN RSA PRIVATE KEY-----)
-//	  • PKCS#8 PEM  (-----BEGIN PRIVATE KEY-----)
-//
-// Decrypted output layout (per bundle):
-//
-//	<out>\<hostname>\
-//	  C\
-//	    Windows\System32\config\SYSTEM
-//	    ...
-//	  collection_report.txt
-//	  memdump.zip   (if memory dump was collected with -mem)
-//
-// Batch -dir mode:
-//   - Matches files whose extension equals the stem of the -key filename.
-//     E.g. key "2026q2.pri" → processes "*.2026q2".
-//   - Use -ext to override the extension filter.
+// decryptor decrypts artifact bundles produced by collector (FCOL0001 / RSA-OAEP + AES-256-GCM).
 package main
 
 import (
@@ -75,10 +47,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Derive the extension filter from the key filename stem when -ext is not set.
 	ext := *extFlag
 	if ext == "" {
 		base := filepath.Base(*keyPath)
-		// Strip known extensions: .pri, .pem
 		for _, sfx := range []string{".pri", ".pem"} {
 			if strings.HasSuffix(strings.ToLower(base), sfx) {
 				ext = base[:len(base)-len(sfx)]
@@ -95,6 +67,7 @@ func main() {
 		}
 	}
 
+	// Open source, decrypt it, and write extracted files under outRoot/<hostname>/.
 	decrypt := func(src, outRoot string) error {
 		f, err := os.Open(src)
 		if err != nil {
@@ -107,8 +80,6 @@ func main() {
 			return fmt.Errorf("init decryptor: %w", err)
 		}
 
-		// Output directory: <outRoot>/<hostname>
-		// The bundle filename IS the hostname (e.g. "DESKTOP-ABC.2026q2")
 		hostname := strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
 		outDir := filepath.Join(outRoot, hostname)
 		if err := os.MkdirAll(outDir, 0755); err != nil {
@@ -169,8 +140,7 @@ func main() {
 	}
 }
 
-// ── Key loading ───────────────────────────────────────────────────────────────
-
+// loadRSAPrivateKey reads a PKCS#1 or PKCS#8 PEM-encoded RSA private key from path.
 func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -198,15 +168,15 @@ func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
 	}
 }
 
-// ── Decryptor ─────────────────────────────────────────────────────────────────
-
+// decryptor holds the stream reader and the initialised AES-256-GCM cipher.
 type decryptor struct {
 	r   io.Reader
 	gcm cipher.AEAD
 }
 
+// newDecryptor reads the file header, decrypts the session key with priv, and
+// returns a decryptor ready to process the artifact stream.
 func newDecryptor(r io.Reader, priv *rsa.PrivateKey) (*decryptor, error) {
-	// Verify magic
 	magic := make([]byte, len(magicV1))
 	if _, err := io.ReadFull(r, magic); err != nil {
 		return nil, fmt.Errorf("read magic: %w", err)
@@ -215,7 +185,6 @@ func newDecryptor(r io.Reader, priv *rsa.PrivateKey) (*decryptor, error) {
 		return nil, fmt.Errorf("unsupported format magic %q (expected %q)", string(magic), magicV1)
 	}
 
-	// Read encrypted AES key length
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return nil, fmt.Errorf("read key length: %w", err)
@@ -225,7 +194,6 @@ func newDecryptor(r io.Reader, priv *rsa.PrivateKey) (*decryptor, error) {
 		return nil, fmt.Errorf("read encrypted key: %w", err)
 	}
 
-	// RSA-OAEP decrypt the AES session key
 	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, encKey, nil)
 	if err != nil {
 		return nil, fmt.Errorf("RSA decryption failed (wrong key?): %w", err)
@@ -243,7 +211,7 @@ func newDecryptor(r io.Reader, priv *rsa.PrivateKey) (*decryptor, error) {
 	return &decryptor{r: r, gcm: gcm}, nil
 }
 
-// nextChunk reads and decrypts one GCM chunk. Returns nil, nil at end-of-stream.
+// nextChunk reads and authenticates one GCM chunk; returns nil, nil at end-of-stream.
 func (d *decryptor) nextChunk() ([]byte, error) {
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(d.r, lenBuf[:]); err != nil {
@@ -270,16 +238,9 @@ func (d *decryptor) nextChunk() ([]byte, error) {
 	return plain, nil
 }
 
-// decryptArtifacts reads named-entry framing and extracts files into outDir.
-// Returns the count of files extracted.
-//
-// Expected output structure under outDir:
-//
-//	C\Windows\System32\...
-//	collection_report.txt
-//	memdump.zip  (if present)
+// decryptArtifacts reassembles the plaintext stream, extracts named entries into
+// outDir, and returns the number of files written.
 func (d *decryptor) decryptArtifacts(outDir string) (int, error) {
-	// Reassemble full plaintext stream
 	var plain []byte
 	for {
 		chunk, err := d.nextChunk()
