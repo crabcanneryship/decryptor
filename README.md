@@ -13,5 +13,18 @@ Simple Execution: A single Go-based binary for quick, local processing without c
 
 Phase 1 Native: Optimized for the initial manual-to-cloud transition baseline.
 
----
-Part of the [veloxamen](https://github.com/veloxamen) project.
+## 🚀 Usage
+
+### Command Line Options
+| Option | Description | Required |
+| :--- | :--- | :--- |
+| `-key` | RSA private key file (.pri or .pem) | `YES` |
+| `-in` | Single encrypted input file | `YES, if -dir is not specified` |
+| `-dir` | Directory of encrypted files (batch mode) | `YES, if -in is not specified ` |
+| `-out` | Output directory | `YES` |
+| `-ext` | Extension filter for -dir | `NO` |
+
+### Example
+```bash
+decryptor.exe -key 26q2.pri -in HOSTNAME.26q2 -out DESTDIR
+```
