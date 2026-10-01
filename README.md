@@ -3,9 +3,6 @@ Local Evidence Decryption Tool
 
 decryptor is a standalone utility written in Go, developed to decrypt forensic evidence collected by the collector during Phase 1 of the pipeline. It is designed for straightforward, local decryption before the transition to fully automated cloud processing.
 
-🚧 Status: Phase 1 Utility
-This tool serves as a bridge for manual or semi-automated decryption workflows. Comprehensive documentation is coming soon.
-
 ✨ Key Features
 Targeted Utility: Specifically built to handle the encryption schemes used by the collector.
 
